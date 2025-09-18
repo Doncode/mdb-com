@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COM Port Communication</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f2f5;
+            color: #333;
+        }
+        .container {
+            background-color: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+        }
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+        button {
+            padding: 12px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button:enabled {
+            background-color: #3498db;
+            color: white;
+        }
+        button:enabled:hover {
+            background-color: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            color: #7f8c8d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        #clearLog {
+            background-color: #e74c3c;
+        }
+        #clearLog:hover:enabled {
+            background-color: #c0392b;
+        }
+        #log {
+            width: 100%;
+            height: 400px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            resize: vertical;
+            background-color: #000;
+            color: #00ff00;
+            white-space: pre;
+            overflow-wrap: break-word;
+            box-sizing: border-box;
+        }
+        .status {
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: 600;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 18px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>COM Port Communication</h1>
+        <p class="subtitle">Web Serial API Interface for Device Communication</p>
+        
+        <div id="warning" class="warning hidden">
+            Web Serial API is not supported in this browser. Please use Chrome, Edge, or another Chromium-based browser.
+        </div>
+        
+        <div class="status disconnected" id="status">Port Disconnected</div>
+        
+        <div class="button-group">
+            <button id="openClosePort">Open Port</button>
+            <button id="enableReader" disabled>Enable Reader</button>
+            <button id="requestId" disabled>Request ID</button>
+            <button id="setup" disabled>Setup</button>
+            <button id="vendRequest" disabled>Vend Request</button>
+            <button id="vendCancel" disabled>Vend Cancel</button>
+            <button id="vendSuccess" disabled>Vend Success</button>
+            <button id="sessionComplete" disabled>Session Complete</button>
+            <button id="clearLog">Clear Log</button>
+        </div>
+        
+        <textarea id="log" readonly></textarea>
+    </div>
+
+    <script>
+        let port = null;
+        let reader = null;
+        let writer = null;
+        let isPortOpen = false;
+
+        const openClosePortBtn = document.getElementById('openClosePort');
+        const enableReaderBtn = document.getElementById('enableReader');
+        const requestIdBtn = document.getElementById('requestId');
+        const setupBtn = document.getElementById('setup');
+        const vendRequestBtn = document.getElementById('vendRequest');
+        const vendCancelBtn = document.getElementById('vendCancel');
+        const vendSuccessBtn = document.getElementById('vendSuccess');
+        const sessionCompleteBtn = document.getElementById('sessionComplete');
+        const clearLogBtn = document.getElementById('clearLog');
+        const logArea = document.getElementById('log');
+        const statusDiv = document.getElementById('status');
+        const warningDiv = document.getElementById('warning');
+
+        // Function to convert hex string to Uint8Array
+        function hexToBytes(hex) {
+            const bytes = [];
+            for (let i = 0; i < hex.length; i += 2) {
+                bytes.push(parseInt(hex.substr(i, 2), 16));
+            }
+            return new Uint8Array(bytes);
+        }
+
+        // Function to convert Uint8Array to hex string
+        function bytesToHex(bytes) {
+            return Array.from(bytes).map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+        }
+
+        // Function to add message to log
+        function addToLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            logArea.value += `[${timestamp}] ${message}\n`;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        // Update button states based on port status
+        function updateButtonStates() {
+            const portOpen = isPortOpen;
+            
+            enableReaderBtn.disabled = !portOpen;
+            requestIdBtn.disabled = !portOpen;
+            setupBtn.disabled = !portOpen;
+            vendRequestBtn.disabled = !portOpen;
+            vendCancelBtn.disabled = !portOpen;
+            vendSuccessBtn.disabled = !portOpen;
+            sessionCompleteBtn.disabled = !portOpen;
+            
+            openClosePortBtn.textContent = portOpen ? 'Close Port' : 'Open Port';
+            statusDiv.textContent = portOpen ? 'Port Connected' : 'Port Disconnected';
+            statusDiv.className = portOpen ? 'status connected' : 'status disconnected';
+        }
+
+        // Open or close the port
+        async function togglePort() {
+            if (isPortOpen) {
+                // Close port
+                if (reader) {
+                    try {
+                        await reader.cancel();
+                    } catch (e) {
+                        console.error('Error cancelling reader:', e);
+                    }
+                }
+                
+                if (writer) {
+                    try {
+                        writer.releaseLock();
+                    } catch (e) {
+                        console.error('Error releasing writer:', e);
+                    }
+                }
+                
+                if (port) {
+                    try {
+                        await port.close();
+                    } catch (e) {
+                        console.error('Error closing port:', e);
+                        addToLog(`Error closing port: ${e.message}`);
+                    }
+                }
+                
+                isPortOpen = false;
+                addToLog('Port closed');
+            } else {
+                // Open port
+                try {
+                    port = await navigator.serial.requestPort();
+                    await port.open({ baudRate: 9600 });
+                    isPortOpen = true;
+                    addToLog('Port opened');
+                    
+                    // Start reading data
+                    reader = port.readable.getReader();
+                    writer = port.writable.getWriter();
+                    
+                    readData();
+                } catch (e) {
+                    console.error('Error opening port:', e);
+                    addToLog(`Error opening port: ${e.message}`);
+                }
+            }
+            
+            updateButtonStates();
+        }
+
+        // Read data from the port
+        async function readData() {
+            try {
+                while (isPortOpen && port && port.readable) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+                    
+                    if (value) {
+                        const hexString = bytesToHex(value);
+                        addToLog(`RX: ${hexString}`);
+                    }
+                }
+            } catch (e) {
+                console.error('Error reading data:', e);
+                if (isPortOpen) {
+                    addToLog(`Error reading data: ${e.message}`);
+                }
+            }
+        }
+
+        // Send data to the port
+        async function sendData(hexString, description) {
+            if (!isPortOpen || !writer) {
+                addToLog('Port is not open');
+                return;
+            }
+            
+            try {
+                const bytes = hexToBytes(hexString.replace(/\s/g, ''));
+                await writer.write(bytes);
+                addToLog(`TX: ${hexString}`);
+            } catch (e) {
+                console.error('Error sending data:', e);
+                addToLog(`Error sending ${description}: ${e.message}`);
+            }
+        }
+
+        // Event listeners for buttons
+        openClosePortBtn.addEventListener('click', togglePort);
+        
+        enableReaderBtn.addEventListener('click', () => {
+            sendData('1401', 'Enable Reader');
+        });
+        
+        requestIdBtn.addEventListener('click', () => {
+            sendData('17004E4543303030303030303030303030202020534F4C4953544120200011', 'Request ID');
+        });
+        
+        setupBtn.addEventListener('click', () => {
+            sendData('110003000002', 'Setup');
+        });
+        
+        vendRequestBtn.addEventListener('click', () => {
+            sendData('130000280001', 'Vend Request');
+        });
+        
+        vendCancelBtn.addEventListener('click', () => {
+            sendData('1301', 'Vend Cancel');
+        });
+        
+        vendSuccessBtn.addEventListener('click', () => {
+            sendData('13020001', 'Vend Success');
+        });
+        
+        sessionCompleteBtn.addEventListener('click', () => {
+            sendData('1304', 'Session Complete');
+        });
+        
+        clearLogBtn.addEventListener('click', () => {
+            logArea.value = '';
+        });
+
+        // Check if Web Serial API is supported
+        if (!('serial' in navigator)) {
+            warningDiv.classList.remove('hidden');
+            openClosePortBtn.disabled = true;
+            addToLog('Web Serial API is not supported in this browser. Please use Chrome, Edge, or another Chromium-based browser.');
+        } else {
+            addToLog('Web Serial API is supported. Click "Open Port" to connect.');
+        }
+
+        // Initialize button states
+        updateButtonStates();
+    </script>
+</body>
+</html>
