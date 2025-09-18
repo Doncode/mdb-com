@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COM Port Web Interface</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .button-container {
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 8px 12px;
+            margin: 5px;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #eee;
+            color: #999;
+            cursor: not-allowed;
+        }
+        #log {
+            width: 100%;
+            height: 400px;
+            font-family: monospace;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>COM Port Web Interface</h1>
+    
+    <div class="button-container">
+        <button id="openCloseBtn">Открыть порт</button>
+        <button id="enableReaderBtn" disabled>Enable Reader</button>
+        <button id="requestIdBtn" disabled>Request ID</button>
+        <button id="setupBtn" disabled>Setup</button>
+        <button id="vendRequestBtn" disabled>Vend Request</button>
+        <button id="vendCancelBtn" disabled>Vend Cancel</button>
+        <button id="vendSuccessBtn" disabled>Vend Success</button>
+        <button id="sessionCompleteBtn" disabled>Session Complete</button>
+        <button id="clearLogBtn">Clear Log</button>
+    </div>
+    
+    <textarea id="log" readonly></textarea>
+
+    <script>
+        let port = null;
+        let reader = null;
+        let isPortOpen = false;
+        const logTextarea = document.getElementById('log');
+        
+        // Элементы кнопок
+        const openCloseBtn = document.getElementById('openCloseBtn');
+        const enableReaderBtn = document.getElementById('enableReaderBtn');
+        const requestIdBtn = document.getElementById('requestIdBtn');
+        const setupBtn = document.getElementById('setupBtn');
+        const vendRequestBtn = document.getElementById('vendRequestBtn');
+        const vendCancelBtn = document.getElementById('vendCancelBtn');
+        const vendSuccessBtn = document.getElementById('vendSuccessBtn');
+        const sessionCompleteBtn = document.getElementById('sessionCompleteBtn');
+        const clearLogBtn = document.getElementById('clearLogBtn');
+        
+        // Добавление сообщения в лог
+        function addToLog(message) {
+            logTextarea.value += message + '\n';
+            logTextarea.scrollTop = logTextarea.scrollHeight;
+        }
+        
+        // Функция для преобразования hex-строки в Uint8Array
+        function hexStringToUint8Array(hexString) {
+            // Удаляем пробелы и преобразуем в массив байт
+            const bytes = hexString.replace(/\s+/g, '').match(/.{1,2}/g);
+            if (!bytes) return new Uint8Array(0);
+            
+            const array = new Uint8Array(bytes.length);
+            for (let i = 0; i < bytes.length; i++) {
+                array[i] = parseInt(bytes[i], 16);
+            }
+            return array;
+        }
+        
+        // Функция для преобразования ArrayBuffer в hex-строку
+        function bufferToHex(buffer) {
+            return Array.from(new Uint8Array(buffer))
+                .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+                .join(' ');
+        }
+        
+        // Открытие/закрытие порта
+        openCloseBtn.addEventListener('click', async () => {
+            if (isPortOpen) {
+                // Закрытие порта
+                if (reader) {
+                    await reader.cancel();
+                    reader = null;
+                }
+                if (port) {
+                    await port.close();
+                    port = null;
+                }
+                isPortOpen = false;
+                openCloseBtn.textContent = 'Открыть порт';
+                updateButtonStates();
+                addToLog('Port closed');
+            } else {
+                // Открытие порта
+                try {
+                    port = await navigator.serial.requestPort();
+                    await port.open({ baudRate: 9600 }); // Установите нужную скорость
+                    
+                    isPortOpen = true;
+                    openCloseBtn.textContent = 'Закрыть порт';
+                    updateButtonStates();
+                    addToLog('Port opened');
+                    
+                    // Запуск чтения данных
+                    readData();
+                    
+                } catch (error) {
+                    addToLog('Error: ' + error.message);
+                }
+            }
+        });
+        
+        // Обновление состояния кнопок
+        function updateButtonStates() {
+            const buttons = [
+                enableReaderBtn, 
+                requestIdBtn, 
+                setupBtn, 
+                vendRequestBtn, 
+                vendCancelBtn, 
+                vendSuccessBtn, 
+                sessionCompleteBtn
+            ];
+            
+            buttons.forEach(btn => {
+                btn.disabled = !isPortOpen;
+            });
+        }
+        
+        // Чтение данных из порта
+        async function readData() {
+            if (!port || !isPortOpen) return;
+            
+            try {
+                reader = port.readable.getReader();
+                
+                while (isPortOpen) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+                    if (value) {
+                        addToLog('RX: ' + bufferToHex(value.buffer));
+                    }
+                }
+            } catch (error) {
+                if (error.name !== 'InterruptedError') {
+                    addToLog('Read error: ' + error.message);
+                }
+            } finally {
+                if (reader) {
+                    reader.releaseLock();
+                    reader = null;
+                }
+            }
+        }
+        
+        // Отправка данных в порт
+        async function writeData(data) {
+            if (!port || !isPortOpen) {
+                addToLog('Error: Port is not open');
+                return;
+            }
+            
+            try {
+                const writer = port.writable.getWriter();
+                await writer.write(data);
+                writer.releaseLock();
+                addToLog('TX: ' + bufferToHex(data));
+            } catch (error) {
+                addToLog('Write error: ' + error.message);
+            }
+        }
+        
+        // Обработчики кнопок
+        enableReaderBtn.addEventListener('click', () => {
+            const data = hexStringToUint8Array('1401');
+            writeData(data);
+        });
+        
+        requestIdBtn.addEventListener('click', () => {
+            const data = hexStringToUint8Array('17 00 4E 45 43 30 30 30 30 30 30 30 30 30 30 30 30 20 20 20 53 4F 4C 49 53 54 41 20 20 00 11');
+            writeData(data);
+        });
+        
+        setupBtn.addEventListener('click', () => {
+            const data = hexStringToUint8Array('11 00 03 00 00 02');
+            writeData(data);
+        });
+        
+        vendRequestBtn.addEventListener('click', () => {
+            const data = hexStringToUint8Array('13 00 00 28 00 01');
+            writeData(data);
+        });
+        
+        vendCancelBtn.addEventListener('click', () => {
+            const data = hexStringToUint8Array('13 01');
+            writeData(data);
+        });
+        
+        vendSuccessBtn.addEventListener('click', () => {
+            const data = hexStringToUint8Array('13 02 00 01');
+            writeData(data);
+        });
+        
+        sessionCompleteBtn.addEventListener('click', () => {
+            const data = hexStringToUint8Array('13 04');
+            writeData(data);
+        });
+        
+        clearLogBtn.addEventListener('click', () => {
+            logTextarea.value = '';
+        });
+        
+        // Проверка поддержки Web Serial API
+        if ('serial' in navigator) {
+            addToLog('Web Serial API поддерживается');
+        } else {
+            addToLog('Web Serial API не поддерживается в этом браузере. Используйте Chrome или Edge.');
+            openCloseBtn.disabled = true;
+        }
+    </script>
+</body>
+</html>
